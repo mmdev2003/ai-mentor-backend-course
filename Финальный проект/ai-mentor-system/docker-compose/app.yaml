@@ -1,0 +1,37 @@
+networks:
+    net:
+        name: net
+        external: true  # Создается в docker-compose.db.yaml
+
+services:
+    backend:
+        build:
+            context: "../../ai-mentor-${BACKEND_CONTAINER_NAME}"
+            dockerfile: ".github/Dockerfile"
+        container_name: "${BACKEND_CONTAINER_NAME}"
+        env_file:
+            - "../env/${ENVIRONMENT}/.env"
+            - "../env/${ENVIRONMENT}/.env.app"
+            - "../env/${ENVIRONMENT}/.env.db"
+            - "../env/${ENVIRONMENT}/.env.monitoring"
+        ports:
+            - "${BACKEND_PORT}:${BACKEND_PORT}"
+        restart: unless-stopped
+        networks:
+            - net
+
+    frontend:
+        build:
+            context: "../../ai-mentor-${FRONTEND_CONTAINER_NAME}"
+            dockerfile: ".github/Dockerfile"
+        container_name: "${FRONTEND_CONTAINER_NAME}"
+        env_file:
+            - "../env/${ENVIRONMENT}/.env"
+            - "../env/${ENVIRONMENT}/.env.app"
+            - "../env/${ENVIRONMENT}/.env.db"
+            - "../env/${ENVIRONMENT}/.env.monitoring"
+        ports:
+            - "${FRONTEND_PORT}:${FRONTEND_PORT}"
+        restart: unless-stopped
+        networks:
+            - net

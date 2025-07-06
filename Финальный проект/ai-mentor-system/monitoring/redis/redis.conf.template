@@ -1,0 +1,18 @@
+protected-mode yes
+loglevel notice
+logfile ""
+databases 5
+
+# AOF настройки
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+auto-aof-rewrite-percentage 100
+auto-aof-rewrite-min-size 64mb
+
+# Сетевые настройки
+bind 0.0.0.0
+requirepass $MONITORING_REDIS_PASSWORD
+timeout 0
+maxclients 10000
+port $MONITORING_REDIS_PORT

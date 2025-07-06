@@ -1,0 +1,138 @@
+x-logging: &default-logging
+    driver: "json-file"
+    options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+    net:
+        name: net
+        external: true  # Создается в docker-compose.db.yml
+
+services:
+    monitoring-redis-exporter:
+        image: oliver006/redis_exporter:latest
+        container_name: "${MONITORING_REDIS_EXPORTER_CONTAINER_NAME}"
+        ports:
+            - "${MONITORING_REDIS_EXPORTER_PORT}:9121"
+        environment:
+            REDIS_ADDR: "${MONITORING_REDIS_CONTAINER_NAME}:${MONITORING_REDIS_PORT}"
+            REDIS_PASSWORD: "${MONITORING_REDIS_PASSWORD}"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    postgres-exporter-backend:
+        image: quay.io/prometheuscommunity/postgres-exporter:latest
+        container_name: "${BACKEND_POSTGRES_EXPORTER_CONTAINER_NAME}"
+        ports:
+            - "${BACKEND_POSTGRES_EXPORTER_PORT}:9187"
+        environment:
+            DATA_SOURCE_URI: "${BACKEND_POSTGRES_CONTAINER_NAME}:5432/postgres?sslmode=disable"
+            DATA_SOURCE_USER: "${BACKEND_POSTGRES_USER}"
+            DATA_SOURCE_PASS: "${BACKEND_POSTGRES_PASSWORD}"
+            PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+            PG_EXPORTER_AUTO_DISCOVER_DATABASES: "true"
+            PG_EXPORTER_EXCLUDE_DATABASES: "template0,template1"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    postgres-exporter-grafana:
+        image: quay.io/prometheuscommunity/postgres-exporter:latest
+        container_name: "${GRAFANA_POSTGRES_EXPORTER_CONTAINER_NAME}"
+        ports:
+            - "${GRAFANA_POSTGRES_EXPORTER_PORT}:9187"
+        environment:
+            DATA_SOURCE_URI: "${GRAFANA_POSTGRES_CONTAINER_NAME}:5432/postgres?sslmode=disable"
+            DATA_SOURCE_USER: "${GRAFANA_POSTGRES_USER}"
+            DATA_SOURCE_PASS: "${GRAFANA_POSTGRES_PASSWORD}"
+            PG_EXPORTER_DISABLE_SETTINGS_METRICS: "false"
+            PG_EXPORTER_AUTO_DISCOVER_DATABASES: "true"
+            PG_EXPORTER_EXCLUDE_DATABASES: "template0,template1"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+
+    otel-collector:
+        image: otel/opentelemetry-collector-contrib:latest
+        container_name: "${OTEL_COLLECTOR_CONTAINER_NAME}"
+        volumes:
+            - "/var/lib/docker/containers:/var/lib/docker/containers:ro"
+            - "/var/run/docker.sock:/var/run/docker.sock:ro"
+            - "/var/log:/var/log:ro"
+            - "../${OTEL_COLLECTOR_CONFIG_FILE}:/etc/otel-collector/otel-collector.yaml:ro"
+        ports:
+            - "${OTEL_COLLECTOR_GRPC_PORT}:${OTEL_COLLECTOR_GRPC_PORT}"
+            - "${OTEL_COLLECTOR_HTTP_PORT}:${OTEL_COLLECTOR_HTTP_PORT}"
+            - "8888:8888"   # Prometheus metrics exposed by the collector
+            - "8889:8889"   # Prometheus exporter metrics
+            - "13133:13133" # health_check extension
+            - "55679:55679" # zpages extension
+        command: "--config=/etc/otel-collector/otel-collector.yaml"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    grafana:
+        image: grafana/grafana:latest
+        container_name: "${GRAFANA_CONTAINER_NAME}"
+        volumes:
+            - "../${GRAFANA_VOLUME_DIR}:/var/lib/grafana"
+            - "../${GRAFANA_DATASOURCES_CONFIG}:/etc/grafana/provisioning/datasources/datasources.yaml"
+        ports:
+            - "${GRAFANA_PORT}:3000"
+        environment:
+            GF_AUTH_ANONYMOUS_ENABLED: false
+            GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
+            GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+            GF_SECURITY_CSRF_TRUSTED_ORIGINS: "${DOMAIN},localhost"
+            GF_SERVER_DOMAIN: "${DOMAIN}"
+            GF_SERVER_ROOT_URL: "https://${DOMAIN}/grafana"
+        networks:
+            - net
+
+    node-exporter:
+        image: prom/node-exporter:latest
+        container_name: "${NODE_EXPORTER_CONTAINER_NAME}"
+        restart: unless-stopped
+        volumes:
+            - "/proc:/host/proc:ro"
+            - "/sys:/host/sys:ro"
+            - "/:/rootfs:ro"
+        command:
+            - '--path.procfs=/host/proc'
+            - '--path.sysfs=/host/sys'
+            - '--path.rootfs=/rootfs'
+            - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|var/lib/docker/.+|var/lib/kubelet/.+)($$|/)'
+            - '--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$$'
+        logging: *default-logging
+        networks:
+            - net
+
+    cadvisor:
+        image: gcr.io/cadvisor/cadvisor:latest
+        container_name: "${CADVISOR_CONTAINER_NAME}"
+        volumes:
+            - "/:/rootfs:ro"
+            - "/var/run:/var/run:ro"
+            - "/sys:/sys:ro"
+            - "/var/lib/docker/:/var/lib/docker:ro"
+            - "/dev/disk/:/dev/disk:ro"
+        ports:
+            - "${CADVISOR_PORT}:8080"
+        command:
+            - '--housekeeping_interval=10s'
+            - '--docker_only=true'
+        privileged: true
+        devices:
+            - "/dev/kmsg:/dev/kmsg"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net

@@ -1,0 +1,202 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+networks:
+    net:
+        name: net
+        driver: bridge
+
+services:
+    backend-db:
+        image: postgres:16-alpine
+        container_name: "${BACKEND_POSTGRES_CONTAINER_NAME}"
+        volumes:
+            - "../${BACKEND_POSTGRES_VOLUME_DIR}:/var/lib/postgresql/data"
+        ports:
+            - "${BACKEND_POSTGRES_PORT}:5432"
+        environment:
+            POSTGRES_DB: "${BACKEND_POSTGRES_DB_NAME}"
+            POSTGRES_USER: "${BACKEND_POSTGRES_USER}"
+            POSTGRES_PASSWORD: "${BACKEND_POSTGRES_PASSWORD}"
+            POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${BACKEND_POSTGRES_USER} -d ${BACKEND_POSTGRES_DB_NAME}"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        networks:
+            - net
+
+    # === КЕШИРОВАНИЕ И СЕССИИ ===
+
+    redis-monitoring:
+        image: redis:7-alpine
+        container_name: "${MONITORING_REDIS_CONTAINER_NAME}"
+        volumes:
+            - "../${MONITORING_REDIS_CONFIG_FILE}:/etc/redis/redis.conf"
+            - "../${MONITORING_REDIS_VOLUME_DIR}:/data"
+        ports:
+            - "${MONITORING_REDIS_PORT}:6379"
+        command: "redis-server /etc/redis/redis.conf"
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 10s
+        networks:
+            - net
+
+    # === МОНИТОРИНГ ИНФРАСТРУКТУРА ===
+
+    grafana-postgres:
+        image: postgres:16-alpine
+        container_name: "${GRAFANA_POSTGRES_CONTAINER_NAME}"
+        volumes:
+            - "../${GRAFANA_POSTGRES_VOLUME_DIR}:/var/lib/postgresql/data"
+        ports:
+            - "${GRAFANA_POSTGRES_PORT}:5432"
+        environment:
+            POSTGRES_DB: "${GRAFANA_POSTGRES_DB_NAME}"
+            POSTGRES_USER: "${GRAFANA_POSTGRES_USER}"
+            POSTGRES_PASSWORD: "${GRAFANA_POSTGRES_PASSWORD}"
+            POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${GRAFANA_POSTGRES_USER} -d ${GRAFANA_POSTGRES_DB_NAME}"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        networks:
+            - net
+
+    # === НАБЛЮДАЕМОСТЬ ===
+
+    loki:
+        image: grafana/loki:3.3.1
+        container_name: "${LOKI_CONTAINER_NAME}"
+        volumes:
+            - "../${LOKI_CONFIG_FILE}:/etc/loki/loki.yaml:ro"
+            - "../${LOKI_VOLUME_DIR}:/loki"
+        ports:
+            - "${LOKI_HTTP_PORT}:${LOKI_HTTP_PORT}"
+            - "${LOKI_GRPC_PORT}:${LOKI_GRPC_PORT}"
+        command: [ "-config.file=/etc/loki/loki.yaml" ]
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:${LOKI_HTTP_PORT}/ready || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        networks:
+            - net
+
+    tempo:
+        image: grafana/tempo:2.6.1
+        container_name: "${TEMPO_CONTAINER_NAME}"
+        volumes:
+            - "../${TEMPO_CONFIG_FILE}:/etc/tempo/tempo.yaml:ro"
+            - "../${TEMPO_VOLUME_DIR}:/var/tempo"
+        ports:
+            - "${TEMPO_HTTP_PORT}:${TEMPO_HTTP_PORT}"
+            - "${TEMPO_GRPC_PORT}:${TEMPO_GRPC_PORT}"
+            - "${TEMPO_OTLP_HTTP_PORT}:${TEMPO_OTLP_HTTP_PORT}"
+            - "${TEMPO_OTLP_GRPC_PORT}:${TEMPO_OTLP_GRPC_PORT}"
+        command: [ "-config.file=/etc/tempo/tempo.yaml" ]
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:${TEMPO_HTTP_PORT}/ready || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        networks:
+            - net
+
+    victoria-metrics:
+        image: victoriametrics/victoria-metrics:v1.107.0
+        container_name: "${VICTORIA_METRICS_CONTAINER_NAME}"
+        volumes:
+            - "../${VICTORIA_METRICS_VOLUME_DIR}:/victoria-metrics-data"
+        ports:
+            - "${VICTORIA_METRICS_HTTP_PORT}:${VICTORIA_METRICS_HTTP_PORT}"
+        command:
+            - '-storageDataPath=/victoria-metrics-data'
+            - '-retentionPeriod=90d'
+            - '-httpListenAddr=:8428'
+            - '-memory.allowedPercent=80'
+            - '-search.maxUniqueTimeseries=2000000'
+            - '-search.maxQueryDuration=300s'
+            - '-search.maxConcurrentRequests=16'
+            - '-insert.maxQueueDuration=60s'
+        logging: *default-logging
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:${VICTORIA_METRICS_HTTP_PORT}/health || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 5
+            start_period: 30s
+        networks:
+            - net
+
+    weed-master:
+        image: chrislusf/seaweedfs
+        logging: *default-logging
+        container_name: wewall-weed-master
+        ports:
+            - "${WEED_MASTER_PORT}:${WEED_MASTER_PORT}"
+        command: "master"
+        networks:
+            - net
+
+    weed-volume:
+        image: chrislusf/seaweedfs:latest
+        container_name: weed-volume
+        command: >
+            volume 
+            -mserver="${WEED_MASTER_CONTAINER_NAME}:${WEED_MASTER_PORT}" 
+            -ip.bind=0.0.0.0 
+            -port=8080 
+            -dir="/data"
+            -max=10
+            -metricsPort=9325
+            -dataCenter=dc1
+            -rack=rack2
+        volumes:
+            - "../${WEED_VOLUME_DIR}:/data"
+        depends_on:
+            - weed-master
+        networks:
+            - net
+        restart: unless-stopped
+        logging: *default-logging
+
+    weed-filer:
+        image: chrislusf/seaweedfs:latest
+        container_name: weed-filer
+        command: >
+            filer 
+            -master="${WEED_MASTER_CONTAINER_NAME}:${WEED_MASTER_PORT}"
+            -ip.bind=0.0.0.0 
+            -metricsPort=9327
+        depends_on:
+            - weed-master
+            - weed-volume
+        networks:
+            - net
+        restart: unless-stopped
+        logging: *default-logging
