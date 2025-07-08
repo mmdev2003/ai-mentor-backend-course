@@ -1434,9 +1434,3 @@ async def update_with_retry(self, query: str, params: dict, max_retries: int = 3
 - **Infrastructure as Code** - все в Git, ничего ручного
 
 **Добро пожаловать в команду! 🚀**
-
----
-
-*Документ обновлен: декабрь 2024*  
-*Версия: 2.0*  
-*Авторы: Engineering Team*
